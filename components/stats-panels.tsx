@@ -1,5 +1,3 @@
-// components/stats-panels.tsx
-//
 // Presentational Server Components. All computation happens in lib/stats.
 // The histogram tooltip is pure CSS group-hover — no client JS.
  
@@ -103,13 +101,13 @@ function Stat({
  
 // ---------------------------------------------------------------------------
  
-export function Mosaic({ urls }: { urls: string[] }) {
+export function Mosaic({ urls, label }: { urls: string[]; label: string }) {
   if (!urls.length) return null;
  
   return (
     <div
       role="img"
-      aria-label="Album art from the tracks I have played most in the last six months"
+      aria-label={label}
       className="mx-auto grid w-full max-w-2xl grid-cols-5 gap-0.5 overflow-hidden rounded-2xl shadow-2xl ring-1 ring-white/10"
     >
       {urls.slice(0, 25).map((url, i) => (

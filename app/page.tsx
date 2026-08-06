@@ -1,5 +1,5 @@
 import { getAllTopData, fetchNowPlaying } from '@/lib/spotify/queries';
-import { mosaicArt } from '@/lib/stats/albums';
+import { getMosaicArt } from '@/lib/mosaic';
 import { musicalAge } from '@/lib/stats/musical-age';
  
 import { NowPlayingCard } from '@/components/now-playing';
@@ -8,6 +8,10 @@ import { TrackList, ArtistList } from '@/components/top-lists';
 import { AgeHistogram, Mosaic } from '@/components/stats-panels';
  
 export const revalidate = 3600;
+ 
+const MOSAIC_HEADING = 'Lately, in covers';
+const MOSAIC_LABEL =
+  'Album art from the tracks I have played most over the last few weeks';
  
 function SectionTitle({
   children,
@@ -29,18 +33,23 @@ function SectionTitle({
 }
  
 export default async function Home() {
-  const [{ tracks, artists, lastPlayed, deepPool }, nowPlaying] =
-    await Promise.all([getAllTopData(), fetchNowPlaying()]);
+  const [{ tracks, artists, lastPlayed, deepPool }, nowPlaying, art] =
+    await Promise.all([getAllTopData(), fetchNowPlaying(), getMosaicArt(25)]);
  
   // The histogram uses the full deduped pool across all time ranges and
   // offsets — typically 150-200 tracks instead of 50.
   const age = musicalAge(deepPool);
  
-  // The mosaic stays medium_term: it is explicitly "the last six months".
-  const art = mosaicArt(tracks.medium_term, 25);
- 
   return (
     <div className="relative isolate w-full overflow-x-clip">
+      {/* Hero glow.
+       *
+       * z-0, NOT -z-10. A negative z-index would paint beneath the opaque
+       * background of <body>, which renders after negative-index descendants
+       * in the root stacking context — the glow would be invisible. A
+       * positioned element at z-0 paints after block backgrounds and before
+       * the z-10 content below.
+       */}
       <div
         aria-hidden
         className="pointer-events-none absolute left-1/2 top-0 z-0 h-[95vh] w-screen -translate-x-1/2"
@@ -105,9 +114,9 @@ export default async function Home() {
         {/* Mosaic --------------------------------------------------------- */}
         <section id="covers" className="py-24 sm:py-32">
           <h2 className="mb-10 text-center text-3xl font-bold tracking-tight sm:text-4xl">
-            The last six months, in covers
+            {MOSAIC_HEADING}
           </h2>
-          <Mosaic urls={art} />
+          <Mosaic urls={art} label={MOSAIC_LABEL} />
         </section>
       </main>
     </div>

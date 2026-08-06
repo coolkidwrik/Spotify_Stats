@@ -2,15 +2,14 @@ import type { CSSProperties } from 'react';
 import type { Metadata } from 'next';
 import './globals.css';
  
-import { getTopTracks } from '@/lib/spotify/queries';
-import { mosaicArt } from '@/lib/stats/albums';
+import { getMosaicArt } from '@/lib/mosaic';
 import { getPalette } from '@/lib/stats/palette';
  
 import Header from '@/components/layout/header';
 import Footer from '@/components/layout/footer';
  
 export const metadata: Metadata = {
-  title: 'Listening Stats',
+  title: "CKWrik's Spotify Stats",
   description: 'What I have been listening to, pulled live from Spotify.',
 };
  
@@ -19,10 +18,11 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Both of these hit the same unstable_cache entries the page uses, so this
-  // costs nothing beyond the first request of the day.
-  const tracks = await getTopTracks('medium_term');
-  const palette = await getPalette(mosaicArt(tracks, 25));
+  // Same call page.tsx makes, so the palette always describes the exact covers
+  // shown in the mosaic. getPalette is keyed on this URL list, so when the
+  // covers change the palette recomputes automatically.
+  const art = await getMosaicArt(25);
+  const palette = await getPalette(art);
  
   return (
     <html
@@ -44,3 +44,4 @@ export default async function RootLayout({
     </html>
   );
 }
+ 
