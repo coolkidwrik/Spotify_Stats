@@ -1,4 +1,3 @@
-// lib/spotify/queries.ts
 import 'server-only';
 import { unstable_cache } from 'next/cache';
 import { spotifyJson } from './client';
@@ -18,9 +17,17 @@ import type {
 } from './types';
  
 const DAY = 86_400;
+const ALL_RANGES: TimeRange[] = ['short_term', 'medium_term', 'long_term'];
+ 
+/**
+ * Spotify caps top items at 50 per time range, and offset >= 50 returns an
+ * empty list. Paging by 49 instead of 50 is a long-standing quirk that does
+ * work, yielding roughly 100 items per range. The overlap is deduped by id.
+ */
+const DEEP_OFFSETS = [0, 49, 98];
  
 // ---------------------------------------------------------------------------
-// Normalizers — raw Spotify JSON to slim app shapes.
+// Normalizers
 // ---------------------------------------------------------------------------
  
 function pickImage(images: { url: string }[] | undefined, i: number) {
@@ -67,27 +74,27 @@ function toArtist(raw: RawArtist): Artist {
 }
  
 // ---------------------------------------------------------------------------
-// Cached queries.
+// Cached queries
 //
-// unstable_cache keys on [keyParts, ...arguments], so getTopTracks('short_term')
-// and getTopTracks('long_term') get separate entries automatically. The access
-// token never enters the key, so hourly token refreshes don't invalidate
-// anything.
-//
-// We request limit=50 even though the UI shows 10 — the extra 40 cost nothing
-// and feed the genre, album, musical-age, and mosaic derivations.
+// unstable_cache keys on [keyParts, ...arguments], so each (range, offset)
+// combination gets its own entry. The access token never enters the key, so
+// hourly token refreshes don't invalidate anything.
 // ---------------------------------------------------------------------------
  
-export const getTopTracks = unstable_cache(
-  async (range: TimeRange): Promise<Track[]> => {
+const getTopTracksPage = unstable_cache(
+  async (range: TimeRange, offset: number): Promise<Track[]> => {
     const data = await spotifyJson<RawPaged<RawTrack>>(
-      `/me/top/tracks?time_range=${range}&limit=50`
+      `/me/top/tracks?time_range=${range}&limit=50&offset=${offset}`
     );
     return data?.items.map(toTrack) ?? [];
   },
   ['spotify', 'top-tracks'],
   { revalidate: DAY, tags: ['spotify'] }
 );
+ 
+export function getTopTracks(range: TimeRange): Promise<Track[]> {
+  return getTopTracksPage(range, 0);
+}
  
 export const getTopArtists = unstable_cache(
   async (range: TimeRange): Promise<Artist[]> => {
@@ -113,9 +120,33 @@ export const getLastPlayed = unstable_cache(
   { revalidate: 300, tags: ['spotify'] }
 );
  
+/**
+ * Every track we can reach, across all three time ranges and all reachable
+ * offsets, deduped. Nine cached calls per day; typically 150-200 unique tracks.
+ * Used for the release-year histogram, where a bigger sample is strictly better.
+ */
+export async function getDeepTrackPool(): Promise<Track[]> {
+  const pages = await Promise.all(
+    ALL_RANGES.flatMap((range) =>
+      DEEP_OFFSETS.map((offset) => getTopTracksPage(range, offset))
+    )
+  );
+ 
+  const seen = new Set<string>();
+  const pool: Track[] = [];
+  for (const page of pages) {
+    for (const track of page) {
+      if (seen.has(track.id)) continue;
+      seen.add(track.id);
+      pool.push(track);
+    }
+  }
+  return pool;
+}
+ 
 // ---------------------------------------------------------------------------
-// Uncached — now playing is the live lane and must never be memoized here.
-// HTTP-level caching happens in the route handler via s-maxage.
+// Uncached — now playing is the live lane. HTTP caching happens in the route
+// handler via s-maxage.
 // ---------------------------------------------------------------------------
  
 export async function fetchNowPlaying(): Promise<NowPlaying> {
@@ -142,7 +173,7 @@ export async function fetchNowPlaying(): Promise<NowPlaying> {
   };
 }
  
-/** Convenience: every cached query the homepage needs, in parallel. */
+/** Everything the homepage needs, in parallel. */
 export async function getAllTopData() {
   const [
     tracksShort,
@@ -152,6 +183,7 @@ export async function getAllTopData() {
     artistsMedium,
     artistsLong,
     lastPlayed,
+    deepPool,
   ] = await Promise.all([
     getTopTracks('short_term'),
     getTopTracks('medium_term'),
@@ -160,6 +192,7 @@ export async function getAllTopData() {
     getTopArtists('medium_term'),
     getTopArtists('long_term'),
     getLastPlayed(),
+    getDeepTrackPool(),
   ]);
  
   return {
@@ -174,5 +207,6 @@ export async function getAllTopData() {
       long_term: artistsLong,
     },
     lastPlayed,
+    deepPool,
   };
 }

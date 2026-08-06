@@ -1,9 +1,8 @@
 'use client';
 
-// Only the switching is client-side. The panels themselves are Server
-// Components passed in as props — React streams all three in the RSC payload,
-// so changing tabs is a state flip with no fetch, no spinner, and no client
-// rendering of the lists.
+// Only the switching is client-side. The panels are Server Components passed
+// in as props, so changing tabs is a state flip over markup that is already in
+// the DOM — no fetch, no spinner, no list rendering shipped to the browser.
  
 import { useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -30,26 +29,35 @@ export function Tabs({ label, panels, initial = 'medium_term' }: Props) {
   }
  
   return (
-    <div className="tabs">
-      <div role="tablist" aria-label={label} className="tabs__list">
-        {TIME_RANGES.map((range, i) => (
-          <button
-            key={range.value}
-            ref={(el) => {
-              tabRefs.current[i] = el;
-            }}
-            role="tab"
-            id={`${baseId}-tab-${range.value}`}
-            aria-selected={active === range.value}
-            aria-controls={`${baseId}-panel-${range.value}`}
-            tabIndex={active === range.value ? 0 : -1}
-            className="tabs__tab"
-            onClick={() => setActive(range.value)}
-            onKeyDown={(e) => onKeyDown(e, i)}
-          >
-            {range.label}
-          </button>
-        ))}
+    <div>
+      <div role="tablist" aria-label={label} className="mb-6 flex flex-wrap gap-2.5">
+        {TIME_RANGES.map((range, i) => {
+          const selected = active === range.value;
+          return (
+            <button
+              key={range.value}
+              ref={(el) => {
+                tabRefs.current[i] = el;
+              }}
+              role="tab"
+              id={`${baseId}-tab-${range.value}`}
+              aria-selected={selected}
+              aria-controls={`${baseId}-panel-${range.value}`}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => setActive(range.value)}
+              onKeyDown={(e) => onKeyDown(e, i)}
+              className={[
+                'rounded-full px-4.5 py-2 text-sm font-medium transition-colors sm:text-base',
+                'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--accent)',
+                selected
+                  ? 'bg-(--accent) text-black'
+                  : 'bg-white/8 text-white/60 hover:bg-white/15 hover:text-white/90',
+              ].join(' ')}
+            >
+              {range.label}
+            </button>
+          );
+        })}
       </div>
  
       {TIME_RANGES.map((range) => (
@@ -66,4 +74,3 @@ export function Tabs({ label, panels, initial = 'medium_term' }: Props) {
     </div>
   );
 }
- 

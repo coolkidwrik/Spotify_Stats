@@ -1,9 +1,5 @@
 'use client';
  
-// components/now-playing.tsx
-//
-// Styling here is structural, not final — swap the inline styles for your own
-// classes. The behaviour is the part worth keeping.
  
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
@@ -16,7 +12,6 @@ const TICK_MS = 250;
 interface Props {
   initial: NowPlaying;
   lastPlayed: LastPlayed | null;
-  /** Server's render time, passed down so first paint matches on hydration. */
   serverNow: number;
 }
  
@@ -24,9 +19,8 @@ export function NowPlayingCard({ initial, lastPlayed, serverNow }: Props) {
   const [state, setState] = useState<NowPlaying>(initial);
   const [elapsed, setElapsed] = useState(0);
  
-  // Client-clock timestamp of when we last received data. Deliberately NOT
-  // state.fetchedAt — that's the server's clock, and any skew between the two
-  // would offset the progress bar by the difference.
+  // Client-clock reference. Not state.fetchedAt — that's the server's clock,
+  // and any skew between the two would offset the bar by the difference.
   const receivedAt = useRef<number>(Date.now());
   const inFlight = useRef(false);
  
@@ -41,33 +35,27 @@ export function NowPlayingCard({ initial, lastPlayed, serverNow }: Props) {
       setState(data);
       setElapsed(0);
     } catch {
-      // Network blip — keep showing the last known state and try again on the
-      // next tick rather than blanking the card.
+      // Keep the last known state rather than blanking on a network blip.
     } finally {
       inFlight.current = false;
     }
   }, []);
  
-  // Poll on an interval, but never while the tab is hidden. Refresh
-  // immediately when it becomes visible again so the bar isn't stale.
   useEffect(() => {
     const id = setInterval(() => {
       if (!document.hidden) refresh();
     }, POLL_MS);
- 
     const onVisible = () => {
       if (!document.hidden) refresh();
     };
     document.addEventListener('visibilitychange', onVisible);
- 
     return () => {
       clearInterval(id);
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [refresh]);
  
-  // Advance the bar locally between polls. This is what makes a 15s poll look
-  // like a live progress bar.
+  // Advance the bar locally so a 15s poll looks continuous.
   useEffect(() => {
     if (!state.isPlaying) return;
     const id = setInterval(
@@ -77,8 +65,7 @@ export function NowPlayingCard({ initial, lastPlayed, serverNow }: Props) {
     return () => clearInterval(id);
   }, [state.isPlaying, state.track?.id]);
  
-  // Refetch the moment the current track should end, rather than waiting up to
-  // 15s for the next poll to notice the song changed.
+  // Refetch when the track should end rather than waiting for the next poll.
   useEffect(() => {
     if (!state.isPlaying || !state.durationMs || state.progressMs == null) return;
     const remaining = state.durationMs - state.progressMs;
@@ -90,7 +77,7 @@ export function NowPlayingCard({ initial, lastPlayed, serverNow }: Props) {
   const { track, isPlaying, durationMs } = state;
  
   if (!track) {
-    return <LastPlayedCard lastPlayed={lastPlayed} serverNow={serverNow} />;
+    return <LastPlayedHero lastPlayed={lastPlayed} serverNow={serverNow} />;
   }
  
   const progress = Math.min(
@@ -100,26 +87,36 @@ export function NowPlayingCard({ initial, lastPlayed, serverNow }: Props) {
   const pct = durationMs ? (progress / durationMs) * 100 : 0;
  
   return (
-    <section aria-label="Now playing" style={{ display: 'flex', gap: 16 }}>
-      {track.album.artThumb && (
+    <div className="flex flex-col items-center gap-8 text-center sm:flex-row sm:items-end sm:gap-10 sm:text-left">
+      {track.album.art && (
         <Image
-          src={track.album.artThumb}
+          src={track.album.art}
           alt={`${track.album.name} cover`}
-          width={80}
-          height={80}
-          style={{ borderRadius: 6 }}
+          width={288}
+          height={288}
+          priority
+          className="h-56 w-56 shrink-0 rounded-xl shadow-2xl sm:h-64 sm:w-64 lg:h-72 lg:w-72"
         />
       )}
  
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p style={{ fontSize: 12, color: 'var(--accent)', margin: 0 }}>
+      <div className="w-full min-w-0">
+        <p className="flex items-center justify-center gap-2.5 text-sm font-medium uppercase tracking-[0.2em] text-(--accent) sm:justify-start">
+          {isPlaying && (
+            <span className="inline-block h-2.5 w-2.5 animate-pulse rounded-full bg-(--accent)" />
+          )}
           {isPlaying ? 'Now playing' : 'Paused'}
         </p>
  
-        <a href={track.url} style={{ fontWeight: 600 }}>
+        <a
+          href={track.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-3 block text-4xl font-bold leading-tight decoration-(--accent) underline-offset-[6px] hover:underline sm:text-5xl lg:text-6xl"
+        >
           {track.name}
         </a>
-        <p style={{ margin: '2px 0 8px', opacity: 0.7 }}>
+ 
+        <p className="mt-2 text-xl text-white/65 sm:text-2xl">
           {track.artists.join(', ')}
         </p>
  
@@ -129,49 +126,31 @@ export function NowPlayingCard({ initial, lastPlayed, serverNow }: Props) {
           aria-valuemax={durationMs ?? 0}
           aria-valuenow={Math.round(progress)}
           aria-valuetext={`${msToClock(progress)} of ${msToClock(durationMs ?? 0)}`}
-          style={{
-            height: 4,
-            borderRadius: 2,
-            background: 'var(--accent-soft)',
-            overflow: 'hidden',
-          }}
+          className="mt-8 h-2 w-full overflow-hidden rounded-full bg-white/15"
         >
           <div
-            style={{
-              width: `${pct}%`,
-              height: '100%',
-              background: 'var(--accent)',
-            }}
+            className="h-full rounded-full bg-(--accent)"
+            style={{ width: `${pct}%` }}
           />
         </div>
  
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            fontSize: 12,
-            opacity: 0.6,
-            marginTop: 4,
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
+        <div className="mt-2.5 flex justify-between text-sm tabular-nums text-white/50">
           <span>{msToClock(progress)}</span>
           <span>{msToClock(durationMs ?? 0)}</span>
         </div>
       </div>
-    </section>
+    </div>
   );
 }
  
-function LastPlayedCard({
+function LastPlayedHero({
   lastPlayed,
   serverNow,
 }: {
   lastPlayed: LastPlayed | null;
   serverNow: number;
 }) {
-  // Render with the server's reference time first so hydration matches, then
-  // switch to live client time once mounted.
+  // Start from the server's reference time so hydration matches, then go live.
   const [now, setNow] = useState(serverNow);
  
   useEffect(() => {
@@ -182,37 +161,52 @@ function LastPlayedCard({
  
   if (!lastPlayed) {
     return (
-      <section aria-label="Now playing">
-        <p style={{ opacity: 0.7 }}>Nothing playing right now.</p>
-      </section>
+      <p className="text-center text-lg text-white/50">
+        Nothing playing right now.
+      </p>
     );
   }
  
   const { track, playedAt } = lastPlayed;
  
   return (
-    <section aria-label="Last played" style={{ display: 'flex', gap: 16 }}>
-      {track.album.artThumb && (
+    <div className="flex flex-col items-center gap-8 text-center sm:flex-row sm:items-end sm:gap-10 sm:text-left">
+      {track.album.art && (
         <Image
-          src={track.album.artThumb}
+          src={track.album.art}
           alt={`${track.album.name} cover`}
-          width={80}
-          height={80}
-          style={{ borderRadius: 6, filter: 'grayscale(1)', opacity: 0.85 }}
+          width={288}
+          height={288}
+          priority
+          className="h-56 w-56 shrink-0 rounded-xl opacity-90 shadow-2xl grayscale sm:h-64 sm:w-64 lg:h-72 lg:w-72"
         />
       )}
-      <div style={{ minWidth: 0 }}>
-        <p style={{ fontSize: 12, opacity: 0.6, margin: 0 }}>Last played</p>
-        <a href={track.url} style={{ fontWeight: 600 }}>
+ 
+      <div className="w-full min-w-0">
+        <p className="text-sm font-medium uppercase tracking-[0.2em] text-white/45">
+          Last played
+        </p>
+ 
+        <a
+          href={track.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-3 block text-4xl font-bold leading-tight decoration-(--accent) underline-offset-[6px] hover:underline sm:text-5xl lg:text-6xl"
+        >
           {track.name}
         </a>
-        <p style={{ margin: '2px 0 0', opacity: 0.7 }}>
+ 
+        <p className="mt-2 text-xl text-white/65 sm:text-2xl">
           {track.artists.join(', ')}
         </p>
-        <time dateTime={playedAt} style={{ fontSize: 12, opacity: 0.6 }}>
+ 
+        <time
+          dateTime={playedAt}
+          className="mt-5 inline-block text-lg text-(--accent)"
+        >
           {relativeTime(playedAt, now)}
         </time>
       </div>
-    </section>
+    </div>
   );
 }
