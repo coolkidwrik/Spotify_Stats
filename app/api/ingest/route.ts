@@ -1,6 +1,6 @@
 // Called by the scheduler every 30 minutes. Every failure path returns a
-// non-2xx so `curl --fail` (or cron-job.org's own failure detection) catches
-// it. Nothing here fails quietly.
+// non-2xx so cron-job.org's failure detection catches it. Nothing fails
+// quietly.
  
 import { spotifyJson, SpotifyAuthError } from '@/lib/spotify/client';
 import { sql } from '@/lib/db';
@@ -8,6 +8,7 @@ import {
   getCursor,
   setCursor,
   insertPlays,
+  samplePlayerState,
   type RecentlyPlayedItem,
 } from '@/lib/plays/ingest';
  
@@ -18,7 +19,7 @@ const TOKEN_LIFETIME_DAYS = 180;
 const TOKEN_WARN_AT_DAYS = 165;
  
 function tokenAgeDays(): number | null {
-  const issued = process.env.SPOTIFY_TOKEN_ISSUED; // e.g. "2026-08-10"
+  const issued = process.env.SPOTIFY_TOKEN_ISSUED; // e.g. "2026-08-17"
   if (!issued) return null;
   const ms = Date.now() - new Date(issued).getTime();
   return Number.isNaN(ms) ? null : Math.floor(ms / 86_400_000);
@@ -51,11 +52,16 @@ export async function GET(req: Request) {
     const qs = new URLSearchParams({ limit: '50' });
     if (cursor) qs.set('after', String(cursor));
  
-    const data = await spotifyJson<{ items: RecentlyPlayedItem[] }>(
-      `/me/player/recently-played?${qs}`
-    );
+    // Both calls in parallel. The player sample is best-effort and swallows
+    // its own errors, so it can never fail the ingest.
+    const [data, sampled] = await Promise.all([
+      spotifyJson<{ items: RecentlyPlayedItem[] }>(
+        `/me/player/recently-played?${qs}`
+      ),
+      samplePlayerState(),
+    ]);
  
-    // spotifyJson returns null on any non-OK response. That is not the same as
+    // spotifyJson returns null on any non-OK response — not the same as
     // "no new plays", so don't let it look like success.
     if (data === null) {
       await recordRun('error', 0, 0, 'spotify returned no data');
@@ -78,8 +84,9 @@ export async function GET(req: Request) {
     return Response.json({
       ok: true,
       inserted,
-      // 50 means the window was saturated and plays were probably lost.
+      // 50 means the window saturated and plays were probably lost.
       windowSize: items.length,
+      playerSampled: sampled,
       tokenExpiresInDays: age === null ? null : TOKEN_LIFETIME_DAYS - age,
       tokenWarning: age !== null && age >= TOKEN_WARN_AT_DAYS,
     });
@@ -93,7 +100,7 @@ export async function GET(req: Request) {
       await recordRun('error', 0, 0, message.slice(0, 500));
     } catch {
       // Database unreachable too. The non-2xx below is the only signal left —
-      // which is exactly why the alarm can't live solely in the database.
+      // which is why the alarm can't live solely in the database.
     }
  
     console.error('[ingest]', message);
