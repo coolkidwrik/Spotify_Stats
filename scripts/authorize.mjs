@@ -97,7 +97,7 @@ const server = http.createServer(async (req, res) => {
       .toISOString()
       .slice(0, 10);
 
-    console.log('\nAdd this to .env.local and to your Vercel env vars:\n');
+    console.log('\nAdd this to .env and to your Vercel env vars:\n');
     console.log(`SPOTIFY_REFRESH_TOKEN=${tokens.refresh_token}\n`);
     console.log(`Granted scopes: ${tokens.scope}`);
     console.log(`Re-run this script before roughly ${expiresOn}.\n`);
