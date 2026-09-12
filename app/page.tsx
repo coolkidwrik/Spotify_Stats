@@ -19,8 +19,12 @@ import {
   type PeriodComparison,
   type PeriodHighlights,
 } from '@/lib/plays/queries';
+import {
+  getListeningAge,
+  emptyListeningAge,
+  type ListeningAge,
+} from '@/lib/plays/age';
 import { getMosaicArt } from '@/lib/mosaic';
-import { musicalAge } from '@/lib/stats/musical-age';
  
 import { NowPlayingCard } from '@/components/now-playing';
 import { Tabs } from '@/components/tabs';
@@ -29,16 +33,24 @@ import { AgeHistogram, Mosaic } from '@/components/stats-panels';
 import { ListeningClock } from '@/components/listening-clock';
 import { ContextSources, PeriodReport } from '@/components/listening-panels';
 import { CollectionStatus } from '@/components/collection-status';
+import {
+  DailyMethodology,
+  WeeklyMethodology,
+  ChartsMethodology,
+  ClockMethodology,
+  SourcesMethodology,
+  AgeMethodology,
+  MosaicMethodology,
+} from '@/components/methodology';
  
 /**
  * The rendered page is cached for 10 minutes, so visitors are served static
- * HTML and don't each trigger a round of database queries. Roughly matches the
- * 30-minute ingest cadence.
+ * HTML rather than each triggering a round of database queries.
  *
- * While developing against cached data, swap this for
- * `export const dynamic = 'force-dynamic'` — and remember that Next's data
- * cache persists in .next/cache across restarts, so `rm -rf .next` is
- * sometimes the only way to see a change.
+ * While developing against cached data, swap for
+ * `export const dynamic = 'force-dynamic'` — and note Next's data cache
+ * persists in .next/cache across restarts, so `rm -rf .next` is sometimes the
+ * only way to see a change.
  */
 export const revalidate = 600;
  
@@ -85,6 +97,7 @@ export default async function Home() {
       getTodayHighlights(),
       getWeeklyComparison(),
       getWeekHighlights(),
+      getListeningAge(),
     ]),
   ]);
  
@@ -93,7 +106,10 @@ export default async function Home() {
   // which is how a dead database connection went unnoticed for a while.
   db.forEach((r, i) => {
     if (r.status === 'rejected') {
-      console.error(`[page] db query ${i} failed:`, r.reason?.message ?? r.reason);
+      console.error(
+        `[page] db query ${i} failed:`,
+        r.reason?.message ?? r.reason
+      );
     }
   });
  
@@ -112,17 +128,17 @@ export default async function Home() {
   const dailyHighlights = unwrap<PeriodHighlights>(5, emptyHighlights);
   const weekly = unwrap<PeriodComparison>(6, emptyComparison);
   const weeklyHighlights = unwrap<PeriodHighlights>(7, emptyHighlights);
+  const age = unwrap<ListeningAge>(8, emptyListeningAge);
  
   // Depends on topContexts, so it can't join the batch above. resolveContexts
   // never throws and caps itself at 3s, falling back to generic labels — the
-  // render can't be blocked longer than that regardless of what Spotify does.
+  // render can't be blocked longer than that whatever Spotify does.
   const contextNames: Map<string, ContextInfo> = await resolveContexts(
     topContexts.map((c) => c.contextUri),
     3000
   );
  
-  const { tracks, artists, lastPlayed, deepPool } = spotify;
-  const age = musicalAge(deepPool);
+  const { tracks, artists, lastPlayed } = spotify;
   const now = Date.now();
  
   return (
@@ -167,6 +183,7 @@ export default async function Home() {
           <div className="mt-10">
             <CollectionStatus info={collection} now={now} />
           </div>
+          <DailyMethodology />
         </section>
  
         {/* Weekly report -------------------------------------------------- */}
@@ -178,6 +195,7 @@ export default async function Home() {
             comparisonLabel="the same point last week"
             emptyMessage="Nothing played yet this week."
           />
+          <WeeklyMethodology />
         </section>
  
         {/* Top tracks + artists (Spotify) --------------------------------- */}
@@ -206,6 +224,7 @@ export default async function Home() {
               />
             </div>
           </div>
+          <ChartsMethodology />
         </section>
  
         {/* Listening clock ------------------------------------------------ */}
@@ -214,6 +233,7 @@ export default async function Home() {
             When I listen
           </h2>
           <ListeningClock hours={clock} days={CLOCK_DAYS} />
+          <ClockMethodology />
         </section>
  
         {/* Where listening comes from ------------------------------------- */}
@@ -224,12 +244,14 @@ export default async function Home() {
             topContexts={topContexts}
             names={contextNames}
           />
+          <SourcesMethodology />
         </section>
  
         {/* Musical age ---------------------------------------------------- */}
         <section id="timeline" className="py-20 sm:py-28">
           <SectionTitle center>Musical age</SectionTitle>
           <AgeHistogram age={age} />
+          <AgeMethodology />
         </section>
  
         {/* Mosaic ---------------------------------------------------------- */}
@@ -238,6 +260,7 @@ export default async function Home() {
             {MOSAIC_HEADING}
           </h2>
           <Mosaic urls={art} label={MOSAIC_LABEL} />
+          <MosaicMethodology />
         </section>
       </main>
     </div>

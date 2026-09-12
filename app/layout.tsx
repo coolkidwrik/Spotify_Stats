@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import './globals.css';
  
 import { getMosaicArt } from '@/lib/mosaic';
-import { getPalette } from '@/lib/stats/palette';
+import { getPalette, fallbackPalette } from '@/lib/stats/palette';
  
 import Header from '@/components/layout/header';
 import Footer from '@/components/layout/footer';
@@ -18,11 +18,23 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Same call page.tsx makes, so the palette always describes the exact covers
-  // shown in the mosaic. getPalette is keyed on this URL list, so when the
-  // covers change the palette recomputes automatically.
-  const art = await getMosaicArt(25);
-  const palette = await getPalette(art);
+  /**
+   * Guarded on purpose. getPalette depends on sharp, whose native binaries
+   * come from npm install scripts — and the build log warns those aren't
+   * explicitly allowed. If sharp ever fails to load, an unguarded call here
+   * would throw in the ROOT layout and take down every page: far too large a
+   * blast radius for a decorative colour.
+   *
+   * Same call page.tsx makes, so it hits the same cache entry and the palette
+   * always describes the exact covers shown in the mosaic.
+   */
+  let palette = fallbackPalette;
+  try {
+    const art = await getMosaicArt(25);
+    palette = await getPalette(art);
+  } catch (err) {
+    console.error('[layout] palette unavailable, using fallback:', err);
+  }
  
   return (
     <html
@@ -44,4 +56,3 @@ export default async function RootLayout({
     </html>
   );
 }
- 

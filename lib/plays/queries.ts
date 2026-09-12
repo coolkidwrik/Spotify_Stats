@@ -18,8 +18,7 @@ import { sql } from '@/lib/db';
  * compares the raw column against a constant, so the index applies.
  *
  * The zone is handled per query rather than via a connection-level TimeZone
- * setting, so these queries mean the same thing regardless of how the client
- * is configured.
+ * setting, so these queries mean the same thing regardless of client config.
  */
 const TZ = process.env.STATS_TIMEZONE ?? 'America/Vancouver';
  
@@ -41,7 +40,7 @@ export interface ClockHour {
  * filter still uses the index.
  */
 export async function getListeningClock(days = 30): Promise<ClockHour[]> {
-  return sql<ClockHour[]>`
+  const rows = await sql<ClockHour[]>`
     with counted as (
       select
         extract(hour from played_at at time zone ${TZ})::int as hour,
@@ -56,6 +55,7 @@ export async function getListeningClock(days = 30): Promise<ClockHour[]> {
     left join counted c on c.hour = h.hour
     order by h.hour
   `;
+  return rows ?? [];
 }
  
 // ---------------------------------------------------------------------------
@@ -88,6 +88,8 @@ export async function getContextBreakdown(
     group by 1
     order by count(*) desc
   `;
+ 
+  if (!rows?.length) return [];
  
   const total = rows.reduce((sum, r) => sum + r.plays, 0) || 1;
   return rows.map((r) => ({
@@ -126,6 +128,8 @@ export async function getTopContexts(
     limit ${limit}
   `;
  
+  if (!rows?.length) return [];
+ 
   return rows.map((r) => ({
     contextUri: r.context_uri,
     contextType: r.context_type,
@@ -139,7 +143,7 @@ export async function getTopContexts(
 //
 // Two plain single-statement queries rather than one CTE + union all. The
 // combined form is what first surfaced the ClientRead stalls; these are simpler
-// to reason about and plan.
+// to reason about and to plan.
 // ---------------------------------------------------------------------------
  
 export interface PeriodTotals {
@@ -173,8 +177,13 @@ type TotalsRow = {
   ms: string;
 };
  
-function toTotals(rows: TotalsRow[]): PeriodTotals {
-  const r = rows[0];
+/**
+ * Optional chaining throughout on purpose. A malformed or empty result set
+ * previously threw "Cannot read properties of undefined (reading 'length')",
+ * which surfaced as a whole failed section rather than a zero.
+ */
+function toTotals(rows: TotalsRow[] | undefined): PeriodTotals {
+  const r = rows?.[0];
   return {
     plays: Number(r?.plays ?? 0),
     tracks: Number(r?.tracks ?? 0),
@@ -301,11 +310,11 @@ type ArtistRow = {
 };
  
 function toHighlights(
-  trackRows: TrackRow[],
-  artistRows: ArtistRow[]
+  trackRows: TrackRow[] | undefined,
+  artistRows: ArtistRow[] | undefined
 ): PeriodHighlights {
-  const t = trackRows[0];
-  const a = artistRows[0];
+  const t = trackRows?.[0];
+  const a = artistRows?.[0];
   return {
     topTrack: t
       ? { id: t.id, name: t.name, detail: t.detail, art: t.art, plays: t.plays }
@@ -403,20 +412,30 @@ export const emptyCollectionInfo: CollectionInfo = {
   lastRunStatus: null,
 };
  
+/**
+ * Catches internally and returns the empty value. This is the query that threw
+ * "Cannot read properties of undefined (reading 'length')" in production — a
+ * JavaScript error from an unexpected result shape, not a connection failure.
+ */
 export async function getCollectionInfo(): Promise<CollectionInfo> {
-  const [meta, runs] = await Promise.all([
-    sql<{ since: Date | null; total: string }[]>`
-      select min(played_at) as since, count(*) as total from plays
-    `,
-    sql<{ ran_at: Date; status: string }[]>`
-      select ran_at, status from ingest_runs order by ran_at desc limit 1
-    `,
-  ]);
+  try {
+    const [meta, runs] = await Promise.all([
+      sql<{ since: Date | null; total: string }[]>`
+        select min(played_at) as since, count(*) as total from plays
+      `,
+      sql<{ ran_at: Date; status: string }[]>`
+        select ran_at, status from ingest_runs order by ran_at desc limit 1
+      `,
+    ]);
  
-  return {
-    since: meta[0]?.since ?? null,
-    totalPlays: Number(meta[0]?.total ?? 0),
-    lastRunAt: runs[0]?.ran_at ?? null,
-    lastRunStatus: runs[0]?.status ?? null,
-  };
+    return {
+      since: meta?.[0]?.since ?? null,
+      totalPlays: Number(meta?.[0]?.total ?? 0),
+      lastRunAt: runs?.[0]?.ran_at ?? null,
+      lastRunStatus: runs?.[0]?.status ?? null,
+    };
+  } catch (err) {
+    console.error('[plays] collection info failed:', err);
+    return emptyCollectionInfo;
+  }
 }

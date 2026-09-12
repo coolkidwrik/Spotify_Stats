@@ -26,32 +26,32 @@ export const sql =
      * Session mode: pooler host, port 5432.
      *
      * Transaction mode (6543) left connections stuck in state=active /
-     * wait_event=ClientRead — Postgres finished executing and waited forever
-     * for the driver to read the result, draining the pool after a few
-     * renders. Postgres's own statement_timeout can't help there, since
-     * execution had already completed.
+     * wait_event=ClientRead — Postgres had finished executing and waited for
+     * the driver to read the result, draining the pool after a few renders.
+     * Postgres's own statement_timeout can't help there, since execution had
+     * already completed.
      *
      * The direct host (db.<ref>.supabase.co) avoids that but is IPv6-only, so
-     * every query silently failed to connect and each section fell back to its
-     * empty state.
+     * on IPv4 networks every query silently failed to connect and each section
+     * fell back to its empty state.
      *
      * Session mode gives a dedicated connection per client for the life of the
-     * session: pooled and IPv4-reachable, with no mid-session handoff.
+     * session: pooled, IPv4-reachable, no mid-session handoff.
      */
     prepare: true, // supported in session mode; not in transaction mode
  
     // Each serverless instance holds its own connections until idle_timeout.
-    // If Vercel ever reports connection-limit errors, lower this rather than
+    // If Vercel reports connection-limit errors, LOWER this rather than
     // raising it.
     max: 5,
  
     idle_timeout: 20,
     connect_timeout: 10,
  
-    // Client-side abort, in SECONDS. Independent of Postgres, so it can break
-    // a stall where the server has finished but the driver isn't reading.
-    timeout: 15,
- 
+    // Server-side only. postgres.js has no client-side query abort — its
+    // `timeout` option is deprecated and merely aliases idle_timeout, so
+    // don't reach for it expecting one. Session mode, not a timeout, is what
+    // protects against the ClientRead stall described above.
     connection: { statement_timeout: 10_000 },
  
     onnotice: () => {},
