@@ -1,10 +1,12 @@
-// components/Header.tsx
 import SmoothScrollLink from './smoothScrollLink';
  
 const LINKS = [
   { targetId: 'now', label: 'Now' },
+  { targetId: 'daily', label: 'Daily' },
+  { targetId: 'weekly', label: 'Weekly' },
   { targetId: 'charts', label: 'Charts' },
-  { targetId: 'timeline', label: 'Timeline' },
+  { targetId: 'clock', label: 'Clock' },
+  { targetId: 'sources', label: 'Sources' },
   { targetId: 'covers', label: 'Covers' },
 ];
  
@@ -17,7 +19,7 @@ export default function Header() {
         </span>
       </SmoothScrollLink>
  
-      <nav className="flex flex-wrap justify-center sm:justify-end gap-6 sm:gap-10 text-base sm:text-lg font-medium">
+      <nav className="flex flex-wrap justify-center sm:justify-end gap-4 sm:gap-6 text-sm sm:text-base font-medium">
         {LINKS.map((link) => (
           <SmoothScrollLink key={link.targetId} href="/" targetId={link.targetId}>
             {link.label}
