@@ -1,12 +1,15 @@
-// Presentational Server Components. All computation happens in lib/stats.
-// The histogram tooltip is pure CSS group-hover — no client JS.
- 
 import Image from 'next/image';
-import type { MusicalAge } from '@/lib/stats/musical-age';
+import type { ListeningAge } from '@/lib/plays/age';
  
-export function AgeHistogram({ age }: { age: MusicalAge }) {
-  if (!age.sampleSize) {
-    return <p className="text-base text-white/45">No release dates available.</p>;
+export function AgeHistogram({ age }: { age: ListeningAge }) {
+  if (!age.sampleSize || !age.byYear.length) {
+    return (
+      <p className="max-w-xl text-base text-white/45">
+        No release dates recorded yet. Release years are captured on plays
+        logged from the point the field was added, so this fills in as more
+        listening is collected.
+      </p>
+    );
   }
  
   const bins = age.byYear;
@@ -20,7 +23,10 @@ export function AgeHistogram({ age }: { age: MusicalAge }) {
     <div>
       <div className="flex h-64 items-end gap-px overflow-visible sm:h-72">
         {bins.map((bin) => (
-          <div key={bin.key} className="group relative flex h-full flex-1 items-end">
+          <div
+            key={bin.key}
+            className="group relative flex h-full flex-1 items-end"
+          >
             <div
               className="w-full rounded-t-[3px] bg-(--accent) opacity-65 transition-opacity group-hover:opacity-100"
               style={{
@@ -29,13 +35,13 @@ export function AgeHistogram({ age }: { age: MusicalAge }) {
               }}
             />
  
-            {/* Full-height hit area so thin and empty bars are still hoverable */}
+            {/* Full-height hit area so thin and empty bars stay hoverable */}
             <div className="absolute inset-0" />
  
             <div className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden -translate-x-1/2 whitespace-nowrap rounded-lg border border-white/10 bg-black/90 px-3 py-2 text-sm shadow-xl backdrop-blur-sm group-hover:block">
               <span className="font-semibold">{bin.label}</span>
               <span className="ml-2 text-white/60">
-                {bin.count} {bin.count === 1 ? 'song' : 'songs'}
+                {bin.count} {bin.count === 1 ? 'play' : 'plays'}
               </span>
             </div>
           </div>
@@ -59,17 +65,23 @@ export function AgeHistogram({ age }: { age: MusicalAge }) {
         <Stat
           label="Oldest"
           value={String(age.oldest?.year ?? '—')}
-          detail={age.oldest?.track.name}
+          detail={
+            age.oldest ? `${age.oldest.name} · ${age.oldest.artist}` : undefined
+          }
         />
         <Stat
           label="Newest"
           value={String(age.newest?.year ?? '—')}
-          detail={age.newest?.track.name}
+          detail={
+            age.newest ? `${age.newest.name} · ${age.newest.artist}` : undefined
+          }
         />
       </dl>
  
       <p className="mt-8 text-center text-sm text-white/35 sm:text-left">
-        Based on {age.sampleSize} tracks with a known release year.
+        Weighted by plays, not by track — a record on repeat counts every time.
+        Based on {age.sampleSize.toLocaleString()} plays across{' '}
+        {age.distinctTracks.toLocaleString()} tracks with a known release year.
       </p>
     </div>
   );

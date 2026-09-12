@@ -5,22 +5,56 @@ const connectionString = process.env.DATABASE_URL;
  
 if (!connectionString) {
   throw new Error(
-    'DATABASE_URL is not set. Use the Supavisor transaction-pooler string ' +
-      '(port 6543) from the Supabase dashboard, not the direct connection.'
+    'DATABASE_URL is not set. Use the Supavisor SESSION-mode string: the ' +
+      'pooler host on port 5432 (not 6543, and not the direct db.<ref> host).'
   );
 }
  
-export const sql = postgres(connectionString, {
-  // Required. Supavisor transaction mode shares one backend connection across
-  // many clients, so a prepared statement created on one query may not exist
-  // when the next runs. Leaving this true produces intermittent
-  // "prepared statement does not exist" errors that only appear under load.
-  prepare: false,
+/**
+ * Next's dev server re-evaluates modules on every hot reload. Without this
+ * singleton each reload creates a fresh connection pool and the old ones are
+ * never closed.
+ */
+const globalForDb = globalThis as unknown as {
+  sql?: ReturnType<typeof postgres>;
+};
  
-  // One connection per serverless instance. Vercel spins up many instances;
-  // the pooler is what does the actual pooling, not this client.
-  max: 1,
+export const sql =
+  globalForDb.sql ??
+  postgres(connectionString, {
+    /**
+     * Session mode: pooler host, port 5432.
+     *
+     * Transaction mode (6543) left connections stuck in state=active /
+     * wait_event=ClientRead — Postgres had finished executing and waited for
+     * the driver to read the result, draining the pool after a few renders.
+     * Postgres's own statement_timeout can't help there, since execution had
+     * already completed.
+     *
+     * The direct host (db.<ref>.supabase.co) avoids that but is IPv6-only, so
+     * on IPv4 networks every query silently failed to connect and each section
+     * fell back to its empty state.
+     *
+     * Session mode gives a dedicated connection per client for the life of the
+     * session: pooled, IPv4-reachable, no mid-session handoff.
+     */
+    prepare: true, // supported in session mode; not in transaction mode
  
-  idle_timeout: 20,
-  connect_timeout: 10,
-});
+    // Each serverless instance holds its own connections until idle_timeout.
+    // If Vercel reports connection-limit errors, LOWER this rather than
+    // raising it.
+    max: 5,
+ 
+    idle_timeout: 20,
+    connect_timeout: 10,
+ 
+    // Server-side only. postgres.js has no client-side query abort — its
+    // `timeout` option is deprecated and merely aliases idle_timeout, so
+    // don't reach for it expecting one. Session mode, not a timeout, is what
+    // protects against the ClientRead stall described above.
+    connection: { statement_timeout: 10_000 },
+ 
+    onnotice: () => {},
+  });
+ 
+if (process.env.NODE_ENV !== 'production') globalForDb.sql = sql;
