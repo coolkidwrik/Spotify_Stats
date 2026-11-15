@@ -1,3 +1,5 @@
+// lib/enrich/lastfm.ts
+//
 // Last.fm tags — the primary feature source.
 //
 // Spotify emptied artist.genres through 2025, so community tags are the
@@ -17,13 +19,24 @@ const BASE = 'https://ws.audioscrobbler.com/2.0/';
 const TIMEOUT_MS = 4000;
 
 /**
- * Tags below this weight are noise — single-user tags, misspellings, and
- * personal labels like "songs i like". Last.fm weights are 0-100 relative to
+ * Floor for a tag to be worth storing. Last.fm weights are 0-100 relative to
  * the most-applied tag on that item.
+ *
+ * This started at 15 and was too aggressive: the first production pass stored
+ * 3.7 tags per artist against a MAX_TAGS cap of 12, so the threshold was
+ * binding long before the cap and most of the usable tail was discarded.
+ *
+ * Deliberately low now. The weight is stored per row, so the SCORER can
+ * down-weight or ignore a weak tag — that is a tunable. Dropping it here is
+ * not: recovering it means re-walking every artist through Last.fm. Filter
+ * late, not early.
+ *
+ * Genuine noise is handled by JUNK_TAGS and the length checks below, which
+ * target it far more precisely than a weight cutoff does.
  */
-const MIN_WEIGHT = 15;
+const MIN_WEIGHT = 5;
 
-/** Keep the signal, drop the long tail. */
+/** The real guard against the long tail: take the top N by weight. */
 const MAX_TAGS = 12;
 
 export interface Tag {
