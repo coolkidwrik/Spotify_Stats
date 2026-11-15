@@ -5,12 +5,11 @@ import type {
   PeriodHighlights,
   TopContext,
 } from '@/lib/plays/queries';
-import type { ContextInfo } from '@/lib/spotify/contexts';
- 
+
 // ---------------------------------------------------------------------------
 // Where listening comes from
 // ---------------------------------------------------------------------------
- 
+
 const CONTEXT_LABELS: Record<string, string> = {
   playlist: 'Playlists',
   album: 'Albums',
@@ -19,7 +18,7 @@ const CONTEXT_LABELS: Record<string, string> = {
   show: 'Shows',
   direct: 'Search or links',
 };
- 
+
 const SINGULAR: Record<string, string> = {
   playlist: 'Playlist',
   album: 'Album',
@@ -27,20 +26,18 @@ const SINGULAR: Record<string, string> = {
   collection: 'Liked Songs',
   show: 'Show',
 };
- 
+
 export function ContextSources({
   breakdown,
   topContexts,
-  names,
 }: {
   breakdown: ContextBreakdown[];
   topContexts: TopContext[];
-  names: Map<string, ContextInfo>;
 }) {
   if (!breakdown.length) {
     return <p className="text-base text-white/45">Not enough data yet.</p>;
   }
- 
+
   return (
     <div className="grid gap-14 lg:grid-cols-2 lg:gap-16">
       <div>
@@ -61,7 +58,7 @@ export function ContextSources({
             />
           ))}
         </div>
- 
+
         <ul className="mt-6 flex flex-col gap-3">
           {breakdown.map((b, i) => (
             <li
@@ -86,7 +83,7 @@ export function ContextSources({
           ))}
         </ul>
       </div>
- 
+
       {topContexts.length > 0 && (
         <div>
           <h3 className="mb-5 text-sm uppercase tracking-[0.14em] text-white/40">
@@ -94,18 +91,19 @@ export function ContextSources({
           </h3>
           <ol className="flex flex-col gap-3">
             {topContexts.map((c) => {
-              const info = names.get(c.contextUri);
+              // name is null until the cron resolver has reached this URI, or
+              // permanently if the playlist was deleted or made private. Fall
+              // back to the type rather than dropping the row — the play count
+              // is still real.
               const label =
-                info?.name ?? SINGULAR[c.contextType] ?? c.contextType;
-              const href =
-                info?.url ??
-                `https://open.spotify.com/${c.contextType}/${c.contextUri.split(':').pop()}`;
- 
+                c.name ?? SINGULAR[c.contextType] ?? c.contextType;
+              const href = `https://open.spotify.com/${c.contextType}/${c.contextUri.split(':').pop()}`;
+
               return (
                 <li key={c.contextUri} className="flex items-center gap-3">
-                  {info?.image ? (
+                  {c.image ? (
                     <Image
-                      src={info.image}
+                      src={c.image}
                       alt=""
                       width={44}
                       height={44}
@@ -114,7 +112,7 @@ export function ContextSources({
                   ) : (
                     <div className="h-11 w-11 shrink-0 rounded bg-white/10" />
                   )}
- 
+
                   <span className="flex min-w-0 flex-1 flex-col">
                     <a
                       href={href}
@@ -125,11 +123,11 @@ export function ContextSources({
                       {label}
                     </a>
                     <span className="truncate text-sm text-white/40">
-                      {SINGULAR[c.contextType] ?? c.contextType} ·{' '}
-                      {c.sampleTrack}
+                      {SINGULAR[c.contextType] ?? c.contextType} · {c.tracks}{' '}
+                      {c.tracks === 1 ? 'track' : 'tracks'}
                     </span>
                   </span>
- 
+
                   <span className="shrink-0 tabular-nums text-white/55">
                     {c.plays}
                   </span>
@@ -142,19 +140,19 @@ export function ContextSources({
     </div>
   );
 }
- 
+
 // ---------------------------------------------------------------------------
 // Period report — daily and weekly share this
 // ---------------------------------------------------------------------------
- 
+
 function Delta({ current, previous }: { current: number; previous: number }) {
   if (previous === 0) {
     return <span className="text-sm text-white/35">no comparison</span>;
   }
- 
+
   const pct = Math.round(((current - previous) / previous) * 100);
   if (pct === 0) return <span className="text-sm text-white/45">level</span>;
- 
+
   return (
     <span
       className={
@@ -165,7 +163,7 @@ function Delta({ current, previous }: { current: number; previous: number }) {
     </span>
   );
 }
- 
+
 function Metric({
   label,
   current,
@@ -192,7 +190,7 @@ function Metric({
     </div>
   );
 }
- 
+
 function HighlightCard({
   label,
   name,
@@ -224,7 +222,7 @@ function HighlightCard({
       ) : (
         <div className="h-16 w-16 shrink-0 rounded-lg bg-white/10 sm:h-18 sm:w-18" />
       )}
- 
+
       <div className="min-w-0">
         <p className="text-sm uppercase tracking-[0.14em] text-white/40">
           {label}
@@ -238,7 +236,7 @@ function HighlightCard({
     </div>
   );
 }
- 
+
 export function PeriodReport({
   comparison,
   highlights,
@@ -252,13 +250,13 @@ export function PeriodReport({
   emptyMessage: string;
 }) {
   const { current, previous } = comparison;
- 
+
   if (!current.plays) {
     return <p className="text-base text-white/45">{emptyMessage}</p>;
   }
- 
+
   const hours = (ms: number) => `${(ms / 3_600_000).toFixed(1)}h`;
- 
+
   return (
     <div>
       <dl className="grid grid-cols-2 gap-x-8 gap-y-10 text-center sm:grid-cols-4 sm:text-left">
@@ -284,7 +282,7 @@ export function PeriodReport({
           format={hours}
         />
       </dl>
- 
+
       {(highlights.topTrack || highlights.topArtist) && (
         <div className="mt-12 grid gap-8 border-t border-white/10 pt-10 sm:grid-cols-2">
           {highlights.topTrack && (
@@ -307,7 +305,7 @@ export function PeriodReport({
           )}
         </div>
       )}
- 
+
       <p className="mt-8 text-center text-sm text-white/35 sm:text-left">
         Compared against {comparisonLabel}. Listening time is estimated —
         Spotify reports which tracks played, not how much of each was heard.

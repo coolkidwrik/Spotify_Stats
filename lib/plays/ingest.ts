@@ -1,13 +1,3 @@
-// lib/plays/ingest.ts
-//
-// DUAL-WRITE PHASE of the normalization.
-//
-// insertPlays writes the normalized tables AND keeps filling the legacy
-// columns on plays. That redundancy is deliberate and temporary: while both
-// are populated, reverting this file leaves the site fully working, because
-// every query still has its old columns. The legacy columns get dropped in a
-// later migration, once the read side has been moved and verified.
-
 import 'server-only';
 import { sql } from '@/lib/db';
 import { spotifyJson } from '@/lib/spotify/client';
