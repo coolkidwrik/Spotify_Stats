@@ -12,8 +12,16 @@ import {
   type RecentlyPlayedItem,
 } from '@/lib/plays/ingest';
 import { resolvePendingContexts } from '@/lib/spotify/contexts';
+import { runEnrichment, queueNewTracks } from '@/lib/enrich/resolver';
+import { waitUntil } from '@vercel/functions';
 
 export const dynamic = 'force-dynamic';
+
+/**
+ * The response returns in a couple of seconds, but enrichment continues in the
+ * background via waitUntil — this is the ceiling for that background work.
+ */
+export const maxDuration = 120;
 
 /** Refresh tokens expire 6 months after authorization. Warn 15 days early. */
 const TOKEN_LIFETIME_DAYS = 180;
@@ -90,6 +98,32 @@ export async function GET(req: Request) {
     // returns 0 rather than throwing.
     const contextsResolved = await resolvePendingContexts(CONTEXTS_PER_RUN);
 
+    // Enrichment runs in the BACKGROUND, not before the response.
+    //
+    // cron-job.org caps a request at 30 seconds, and the enrichment budget
+    // alone is 45 — MusicBrainz allows one request per second, so a batch is
+    // inherently slow. Awaiting it here would make every run report as failed
+    // (and email about it) despite the ingest having succeeded.
+    //
+    // waitUntil keeps the serverless function alive until the promise settles,
+    // bounded by maxDuration above, while the response goes out immediately.
+    // Everything that matters has already committed by this point: the plays
+    // are written, the cursor is advanced, the run is recorded.
+    //
+    // The trade: enrichment counts are no longer in the response. Check
+    // progress with a query against track_enrichment, or the Vercel logs.
+    waitUntil(
+      (async () => {
+        try {
+          await queueNewTracks();
+          const result = await runEnrichment();
+          console.log('[enrich]', JSON.stringify(result));
+        } catch (err) {
+          console.warn('[enrich] background pass failed:', err);
+        }
+      })()
+    );
+
     return Response.json({
       ok: true,
       inserted,
@@ -97,6 +131,7 @@ export async function GET(req: Request) {
       windowSize: items.length,
       playerSampled: sampled,
       contextsResolved,
+      enrichmentQueued: true,
       tokenExpiresInDays: age === null ? null : TOKEN_LIFETIME_DAYS - age,
       tokenWarning: age !== null && age >= TOKEN_WARN_AT_DAYS,
     });
