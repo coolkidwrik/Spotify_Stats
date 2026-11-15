@@ -18,6 +18,8 @@ const SCOPES = [
   'user-top-read',
   'user-read-recently-played',
   'user-read-currently-playing',
+  'playlist-read-private',
+  'user-read-playback-state',
 ].join(' ');
 
 if (!CLIENT_ID || !CLIENT_SECRET) {
