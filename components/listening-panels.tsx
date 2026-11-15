@@ -118,7 +118,7 @@ export function ContextSources({
                       href={href}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="truncate text-base decoration-[var(--accent)] underline-offset-2 hover:underline"
+                      className="truncate text-base decoration-(--accent) underline-offset-2 hover:underline"
                     >
                       {label}
                     </a>
@@ -156,7 +156,7 @@ function Delta({ current, previous }: { current: number; previous: number }) {
   return (
     <span
       className={
-        pct > 0 ? 'text-sm text-[var(--accent)]' : 'text-sm text-white/45'
+        pct > 0 ? 'text-sm text-(--accent)' : 'text-sm text-white/45'
       }
     >
       {pct > 0 ? '↑' : '↓'} {Math.abs(pct)}%
@@ -215,12 +215,12 @@ function HighlightCard({
           width={72}
           height={72}
           className={[
-            'h-16 w-16 shrink-0 sm:h-[72px] sm:w-[72px]',
+            'h-16 w-16 shrink-0 sm:h-18 sm:w-18',
             round ? 'rounded-full object-cover' : 'rounded-lg',
           ].join(' ')}
         />
       ) : (
-        <div className="h-16 w-16 shrink-0 rounded-lg bg-white/10 sm:h-[72px] sm:w-[72px]" />
+        <div className="h-16 w-16 shrink-0 rounded-lg bg-white/10 sm:h-18 sm:w-18" />
       )}
 
       <div className="min-w-0">
