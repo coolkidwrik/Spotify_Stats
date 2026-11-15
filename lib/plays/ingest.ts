@@ -62,7 +62,7 @@ export async function setCursor(ms: number): Promise<void> {
 // Plays
 // ---------------------------------------------------------------------------
 
-/** De-duplicate a list of objects by a key, keeping the first occurrence. */
+/** De-duplicate by a key, keeping the first occurrence. */
 function uniqueBy<T>(rows: T[], key: (row: T) => string): T[] {
   const seen = new Set<string>();
   const out: T[] = [];
@@ -82,9 +82,13 @@ function uniqueBy<T>(rows: T[], key: (row: T) => string): T[] {
  * difference is the signal you want: consistently 0 while window_size is
  * healthy means the cursor is stuck.
  *
- * Order matters. Parents before children, so the foreign keys always resolve:
- *   albums → artists → tracks → track_artists → contexts → plays
- * All of it in one transaction, so a mid-batch failure leaves nothing partial.
+ * Order matters. Parents before children, so foreign keys always resolve:
+ *   albums -> artists -> tracks -> track_artists -> contexts -> plays
+ * All in one transaction, so a mid-batch failure leaves nothing partial.
+ *
+ * Note the de-duplication: `on conflict do update` raises "cannot affect row a
+ * second time" if the same key appears twice in one INSERT, and a batch of 50
+ * plays routinely contains the same track or album more than once.
  */
 export async function insertPlays(
   items: RecentlyPlayedItem[]
@@ -95,8 +99,6 @@ export async function insertPlays(
   // primary key. Rare, and not worth a synthetic id.
   const usable = items.filter((item) => item.track?.id);
   if (!usable.length) return 0;
-
-  // --- Build the row sets -------------------------------------------------
 
   const albumRows = uniqueBy(
     usable
@@ -157,31 +159,12 @@ export async function insertPlays(
     (r) => r.context_uri
   );
 
-  const playRows = usable.map((i) => {
-    const t = i.track;
-    return {
-      played_at: i.played_at,
-      track_id: t.id as string,
-      context_type: i.context?.type ?? null,
-      context_uri: i.context?.uri ?? null,
-
-      // --- Legacy columns, still written during the dual-write phase -------
-      track_name: t.name,
-      artist_id: t.artists[0]?.id ?? 'unknown',
-      artist_name: t.artists.map((a) => a.name).join(', '),
-      all_artist_ids: t.artists.map((a) => a.id).filter(Boolean) as string[],
-      album_id: t.album?.id ?? null,
-      album_name: t.album?.name ?? null,
-      album_art: t.album?.images?.[1]?.url ?? null,
-      release_date: t.album?.release_date ?? null,
-      track_number: t.track_number ?? null,
-      duration_ms: t.duration_ms,
-      explicit: t.explicit ?? null,
-      is_local: t.is_local ?? false,
-    };
-  });
-
-  // --- Write, parents first -----------------------------------------------
+  // Three columns. This is the whole point of the migration.
+  const playRows = usable.map((i) => ({
+    played_at: i.played_at,
+    track_id: i.track.id as string,
+    context_uri: i.context?.uri ?? null,
+  }));
 
   let inserted = 0;
 
@@ -203,7 +186,7 @@ export async function insertPlays(
     }
 
     if (artistRows.length) {
-      // do update, not do nothing: this is what corrects the '(unresolved)'
+      // do update, not do nothing: this is what corrects any '(unresolved)'
       // placeholder rows the backfill created for featured artists.
       await tx`
         insert into artists ${tx(artistRows, 'artist_id', 'artist_name')}
@@ -254,25 +237,7 @@ export async function insertPlays(
     }
 
     const result = await tx`
-      insert into plays ${tx(
-        playRows,
-        'played_at',
-        'track_id',
-        'context_type',
-        'context_uri',
-        'track_name',
-        'artist_id',
-        'artist_name',
-        'all_artist_ids',
-        'album_id',
-        'album_name',
-        'album_art',
-        'release_date',
-        'track_number',
-        'duration_ms',
-        'explicit',
-        'is_local'
-      )}
+      insert into plays ${tx(playRows, 'played_at', 'track_id', 'context_uri')}
       on conflict (played_at, track_id) do nothing
       returning track_id
     `;
@@ -291,9 +256,15 @@ export async function insertPlays(
  * Sample the player. Device type, shuffle and repeat exist ONLY here —
  * recently-played carries none of them.
  *
- * A sample, not a log: each run sees one instant and misses everything
- * between runs, so these are proportions over samples, never over plays.
- * Best-effort — a failure here must not fail ingestion.
+ * NOTE: /me/player requires the `user-read-playback-state` scope, which the
+ * current refresh token does not carry — so this returns 401 on every run and
+ * player_samples stays empty. Either add that scope and re-run
+ * scripts/authorize.mjs, or delete this function and its call in the ingest
+ * route. Leaving it costs one wasted Spotify request per run.
+ *
+ * A sample, not a log: each run sees one instant and misses everything between
+ * runs, so these are proportions over samples, never over plays. Best-effort —
+ * a failure here must not fail ingestion.
  */
 export async function samplePlayerState(): Promise<boolean> {
   try {
