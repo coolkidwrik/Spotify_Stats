@@ -1,5 +1,4 @@
 import { getAllTopData, fetchNowPlaying } from '@/lib/spotify/queries';
-import { resolveContexts, type ContextInfo } from '@/lib/spotify/contexts';
 import {
   getListeningClock,
   getContextBreakdown,
@@ -25,7 +24,7 @@ import {
   type ListeningAge,
 } from '@/lib/plays/age';
 import { getMosaicArt } from '@/lib/mosaic';
- 
+
 import { NowPlayingCard } from '@/components/now-playing';
 import { Tabs } from '@/components/tabs';
 import { TrackList, ArtistList } from '@/components/top-lists';
@@ -42,7 +41,7 @@ import {
   AgeMethodology,
   MosaicMethodology,
 } from '@/components/methodology';
- 
+
 /**
  * The rendered page is cached for 10 minutes, so visitors are served static
  * HTML rather than each triggering a round of database queries.
@@ -53,15 +52,13 @@ import {
  * only way to see a change.
  */
 export const revalidate = 600;
- 
+
 const CLOCK_DAYS = 30;
-// Five rather than eight: fewer Spotify lookups to resolve names for, and the
-// tail of that list is rarely interesting.
 const TOP_CONTEXT_COUNT = 5;
 const MOSAIC_HEADING = 'Lately, in covers';
 const MOSAIC_LABEL =
   'Album art from the tracks I have played most over the last few weeks';
- 
+
 function SectionTitle({
   children,
   center,
@@ -80,7 +77,7 @@ function SectionTitle({
     </h2>
   );
 }
- 
+
 export default async function Home() {
   // Spotify and database reads are independent. allSettled so a database
   // problem degrades those sections rather than 500ing the whole page.
@@ -100,7 +97,7 @@ export default async function Home() {
       getListeningAge(),
     ]),
   ]);
- 
+
   // Log rejections rather than swallowing them. A section silently falling
   // back to its empty state looks identical to "you listened to nothing",
   // which is how a dead database connection went unnoticed for a while.
@@ -112,14 +109,14 @@ export default async function Home() {
       );
     }
   });
- 
+
   // Explicit type arguments: allSettled over a heterogeneous array loses the
   // per-index types, so inference from the fallback alone gives never[].
   const unwrap = <T,>(i: number, fallback: T): T =>
     db[i].status === 'fulfilled'
       ? (db[i] as PromiseFulfilledResult<T>).value
       : fallback;
- 
+
   const clock = unwrap<ClockHour[]>(0, []);
   const breakdown = unwrap<ContextBreakdown[]>(1, []);
   const topContexts = unwrap<TopContext[]>(2, []);
@@ -129,18 +126,10 @@ export default async function Home() {
   const weekly = unwrap<PeriodComparison>(6, emptyComparison);
   const weeklyHighlights = unwrap<PeriodHighlights>(7, emptyHighlights);
   const age = unwrap<ListeningAge>(8, emptyListeningAge);
- 
-  // Depends on topContexts, so it can't join the batch above. resolveContexts
-  // never throws and caps itself at 3s, falling back to generic labels — the
-  // render can't be blocked longer than that whatever Spotify does.
-  const contextNames: Map<string, ContextInfo> = await resolveContexts(
-    topContexts.map((c) => c.contextUri),
-    3000
-  );
- 
+
   const { tracks, artists, lastPlayed } = spotify;
   const now = Date.now();
- 
+
   return (
     <div className="relative isolate w-full overflow-x-clip">
       {/* Hero glow. z-0, not -z-10: a negative index paints beneath the opaque
@@ -158,7 +147,7 @@ export default async function Home() {
             'linear-gradient(to bottom, black 0%, black 45%, transparent 88%)',
         }}
       />
- 
+
       <main className="relative z-10 mx-auto w-full max-w-6xl px-6 sm:px-8">
         {/* Now playing --------------------------------------------------- */}
         <section id="now" className="flex min-h-[80vh] items-center pt-36 pb-20">
@@ -170,7 +159,7 @@ export default async function Home() {
             />
           </div>
         </section>
- 
+
         {/* Daily report --------------------------------------------------- */}
         <section id="daily" className="py-20 sm:py-28">
           <SectionTitle center>Daily report</SectionTitle>
@@ -185,7 +174,7 @@ export default async function Home() {
           </div>
           <DailyMethodology />
         </section>
- 
+
         {/* Weekly report -------------------------------------------------- */}
         <section id="weekly" className="py-20 sm:py-28">
           <SectionTitle center>Weekly report</SectionTitle>
@@ -197,7 +186,7 @@ export default async function Home() {
           />
           <WeeklyMethodology />
         </section>
- 
+
         {/* Top tracks + artists (Spotify) --------------------------------- */}
         <section id="charts" className="py-20 sm:py-28">
           <div className="grid gap-16 lg:grid-cols-2 lg:gap-12">
@@ -226,7 +215,7 @@ export default async function Home() {
           </div>
           <ChartsMethodology />
         </section>
- 
+
         {/* Listening clock ------------------------------------------------ */}
         <section id="clock" className="py-20 sm:py-28">
           <h2 className="mb-10 text-center text-3xl font-bold tracking-tight sm:text-4xl">
@@ -235,25 +224,21 @@ export default async function Home() {
           <ListeningClock hours={clock} days={CLOCK_DAYS} />
           <ClockMethodology />
         </section>
- 
+
         {/* Where listening comes from ------------------------------------- */}
         <section id="sources" className="py-20 sm:py-28">
           <SectionTitle center>Where it comes from</SectionTitle>
-          <ContextSources
-            breakdown={breakdown}
-            topContexts={topContexts}
-            names={contextNames}
-          />
+          <ContextSources breakdown={breakdown} topContexts={topContexts} />
           <SourcesMethodology />
         </section>
- 
+
         {/* Musical age ---------------------------------------------------- */}
         <section id="timeline" className="py-20 sm:py-28">
           <SectionTitle center>Musical age</SectionTitle>
           <AgeHistogram age={age} />
           <AgeMethodology />
         </section>
- 
+
         {/* Mosaic ---------------------------------------------------------- */}
         <section id="covers" className="py-24 sm:py-32">
           <h2 className="mb-10 text-center text-3xl font-bold tracking-tight sm:text-4xl">

@@ -1,30 +1,16 @@
+// Resolves playlist/album/artist names for context URIs.
+//
+// Deliberately does NOT use spotifyFetch: that helper sleeps and retries on
+// 429, so a handful of lookups could stall for minutes. Here every request has
+// a hard AbortSignal timeout and a rate limit is simply a miss — the row keeps
+// resolved_at NULL and is retried on a later run.
+
 import 'server-only';
-import { unstable_cache } from 'next/cache';
- 
-export interface ContextInfo {
-  uri: string;
-  type: string;
-  name: string;
-  image: string | null;
-  url: string;
-}
- 
-/**
- * Turn a context URI into a display name.
- *
- * plays stores context_uri (spotify:playlist:37i9dQ...) but Spotify sends no
- * name with it, so three different playlists all render as "Playlists" without
- * this.
- *
- * IMPORTANT: this deliberately does NOT use spotifyFetch. That helper sleeps
- * and retries on 429, so eight URIs could stall for minutes — which is very
- * likely what hung the page when this was first added. Here every request has
- * a hard AbortSignal timeout and a rate limit is simply a miss.
- */
- 
+import { getUnresolvedContexts, saveContextInfo } from '@/lib/plays/queries';
+
 const TOKEN_ENDPOINT = 'https://accounts.spotify.com/api/token';
 const PER_REQUEST_TIMEOUT_MS = 2500;
- 
+
 async function getToken(): Promise<string | null> {
   try {
     const res = await fetch(TOKEN_ENDPOINT, {
@@ -51,117 +37,92 @@ async function getToken(): Promise<string | null> {
     return null;
   }
 }
- 
-/**
- * Cached per-URI, so a new playlist appearing in your top sources doesn't
- * invalidate names already resolved. One lookup per URI per day.
- */
-const resolveOne = unstable_cache(
-  async (uri: string): Promise<ContextInfo | null> => {
-    const [, type, id] = uri.split(':');
-    if (!type || !id) return null;
- 
-    // Only these carry a fetchable name. collection (Liked Songs) has no
-    // endpoint and falls back to a static label below.
-    const path =
-      type === 'playlist'
-        ? `/playlists/${id}?fields=name,images,external_urls`
-        : type === 'album'
-          ? `/albums/${id}`
-          : type === 'artist'
-            ? `/artists/${id}`
-            : null;
- 
-    if (!path) return null;
- 
-    const token = await getToken();
-    if (!token) return null;
- 
-    try {
-      const res = await fetch(`https://api.spotify.com/v1${path}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: 'no-store',
-        signal: AbortSignal.timeout(PER_REQUEST_TIMEOUT_MS),
-      });
- 
-      // No retry on 429 — a rate limit is a miss, not a reason to sleep.
-      if (!res.ok) return null;
- 
-      const data = (await res.json()) as {
-        name?: string;
-        images?: { url: string }[];
-        external_urls?: { spotify: string };
-      };
-      if (!data.name) return null;
- 
-      return {
-        uri,
-        type,
-        name: data.name,
-        image: data.images?.[1]?.url ?? data.images?.[0]?.url ?? null,
-        url:
-          data.external_urls?.spotify ??
-          `https://open.spotify.com/${type}/${id}`,
-      };
-    } catch {
-      return null;
-    }
-  },
-  ['spotify', 'context-name'],
-  { revalidate: 86_400, tags: ['spotify'] }
-);
- 
-const STATIC_LABELS: Record<string, string> = {
-  collection: 'Liked Songs',
-  show: 'Podcast',
-  playlist: 'Playlist',
-  album: 'Album',
-  artist: 'Artist',
-};
- 
-function fallbackFor(uri: string): ContextInfo {
-  const parts = uri.split(':');
-  const type = parts[1] ?? 'unknown';
-  return {
-    uri,
-    type,
-    name: STATIC_LABELS[type] ?? 'Unknown source',
-    image: null,
-    url: `https://open.spotify.com/${type}/${parts[parts.length - 1]}`,
-  };
+
+interface Resolved {
+  name: string | null;
+  image: string | null;
 }
- 
-/**
- * Resolve many URIs. Never throws, never hangs.
- *
- * All lookups run in parallel and the whole batch is capped by budgetMs, so
- * the page render can be delayed by at most that long no matter what Spotify
- * does. Anything unresolved falls back to a generic label — the row still
- * shows its play count, which is the part that matters.
- */
-export async function resolveContexts(
-  uris: string[],
-  budgetMs = 3000
-): Promise<Map<string, ContextInfo>> {
-  const map = new Map<string, ContextInfo>();
-  for (const uri of uris) map.set(uri, fallbackFor(uri));
- 
-  if (!uris.length) return map;
- 
-  const lookups = Promise.allSettled(uris.map((uri) => resolveOne(uri)));
-  const budget = new Promise<null>((resolve) =>
-    setTimeout(() => resolve(null), budgetMs)
-  );
- 
-  const results = await Promise.race([lookups, budget]);
-  if (!results) {
-    console.warn('[contexts] resolution exceeded budget; using fallbacks');
-    return map;
+
+async function lookup(uri: string, token: string): Promise<Resolved | null> {
+  const [, type, id] = uri.split(':');
+  if (!type || !id) return null;
+
+  // Only these carry a fetchable name. collection (Liked Songs) has no
+  // endpoint, so it gets a static name written below.
+  const path =
+    type === 'playlist'
+      ? `/playlists/${id}?fields=name,images`
+      : type === 'album'
+        ? `/albums/${id}`
+        : type === 'artist'
+          ? `/artists/${id}`
+          : null;
+
+  if (!path) {
+    const STATIC: Record<string, string> = {
+      collection: 'Liked Songs',
+      show: 'Podcast',
+    };
+    return STATIC[type] ? { name: STATIC[type], image: null } : null;
   }
- 
-  results.forEach((r) => {
-    if (r.status === 'fulfilled' && r.value) map.set(r.value.uri, r.value);
-  });
- 
-  return map;
+
+  try {
+    const res = await fetch(`https://api.spotify.com/v1${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(PER_REQUEST_TIMEOUT_MS),
+    });
+
+    // No retry on 429 — a rate limit is a miss, not a reason to sleep.
+    if (!res.ok) return null;
+
+    const data = (await res.json()) as {
+      name?: string;
+      images?: { url: string }[];
+    };
+    if (!data.name) return null;
+
+    return {
+      name: data.name,
+      image: data.images?.[1]?.url ?? data.images?.[0]?.url ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve a batch of unresolved contexts. Called from the ingest route, so it
+ * runs on the cron schedule rather than during a page render.
+ *
+ * Returns how many were resolved. Never throws — the caller treats this as
+ * best-effort and ingestion must not depend on it.
+ */
+export async function resolvePendingContexts(limit = 10): Promise<number> {
+  try {
+    const uris = await getUnresolvedContexts(limit);
+    if (!uris.length) return 0;
+
+    const token = await getToken();
+    if (!token) return 0;
+
+    let resolved = 0;
+    const results = await Promise.allSettled(
+      uris.map(async (uri) => {
+        const info = await lookup(uri, token);
+        // Write even on a miss, so a permanently dead playlist (deleted or
+        // private) stops being retried forever.
+        await saveContextInfo(uri, info?.name ?? null, info?.image ?? null);
+        if (info?.name) resolved++;
+      })
+    );
+
+    const failed = results.filter((r) => r.status === 'rejected').length;
+    if (failed) console.warn(`[contexts] ${failed} lookups failed`);
+
+    return resolved;
+  } catch (err) {
+    console.warn('[contexts] resolver failed:', err);
+    return 0;
+  }
 }
