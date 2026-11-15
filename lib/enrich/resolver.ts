@@ -25,6 +25,19 @@ const MAX_ATTEMPTS = 3;
  * route's maxDuration, so it must leave headroom under that.
  */
 const BUDGET_MS = 90_000;
+/**
+ * Slice reserved for the artist loop, which runs FIRST.
+ *
+ * The first production pass resolved 14 tracks and 0 artists. Both loops
+ * shared one deadline, the track loop ran first, and its per-track MusicBrainz
+ * call (1.1s of mandated throttle plus the request) consumed all 90 seconds —
+ * so the artist loop never executed at all.
+ *
+ * Artists are both cheaper (one Last.fm call each, no rate-limited lookup) and
+ * more valuable (artist tags have far better coverage than track tags), and
+ * there are fewer of them. They get a guaranteed slice at the front.
+ */
+const ARTIST_BUDGET_MS = 30_000;
 
 const SPOTIFY_TOKEN_ENDPOINT = 'https://accounts.spotify.com/api/token';
 
@@ -200,13 +213,27 @@ async function resolveTracks(
         }
       }
 
-      // 3. ISRC, if not already stored.
+      // 3. Script of the title. Moved AHEAD of MusicBrainz: it costs
+      //    microseconds, and for a Hangul or Kana title it is about as
+      //    reliable as MusicBrainz's work language — which is often absent
+      //    for exactly those tracks anyway. It returns null for every
+      //    Latin-script title, which is precisely where MusicBrainz is worth
+      //    a second of budget.
+      if (!language) {
+        const fromScript = languageFromScript(row.track_name);
+        if (fromScript) {
+          language = fromScript;
+          languageSource = 'script';
+        }
+      }
+
+      // 4. ISRC, if not already stored. The join key into MusicBrainz.
       if (!isrc && token) {
         isrc = await fetchIsrc(row.track_id, token);
       }
 
-      // 4. MusicBrainz. Authoritative language, but 1 req/sec — only worth
-      //    it when a tag didn't already answer.
+      // 5. MusicBrainz. Authoritative, but 1 req/sec — the budget bottleneck,
+      //    so it only runs when neither a tag nor the script answered.
       if (isrc && !language) {
         const rec = await lookupByIsrc(isrc);
         if (rec) {
@@ -215,20 +242,6 @@ async function resolveTracks(
             language = rec.language;
             languageSource = 'musicbrainz';
           }
-        }
-      } else if (isrc && language) {
-        // Still want the MBID for later use, but don't spend a request on it
-        // when the language question is already settled.
-        mbid = null;
-      }
-
-      // 5. Script of the title. Last resort — cannot distinguish any
-      //    Latin-script language, so it returns null for most tracks.
-      if (!language) {
-        const fromScript = languageFromScript(row.track_name);
-        if (fromScript) {
-          language = fromScript;
-          languageSource = 'script';
         }
       }
 
@@ -334,11 +347,15 @@ async function resolveArtists(
  */
 export async function runEnrichment(): Promise<EnrichResult> {
   const out: EnrichResult = { ...EMPTY };
-  const deadline = Date.now() + BUDGET_MS;
+  const hardDeadline = Date.now() + BUDGET_MS;
 
   try {
-    await resolveTracks(deadline, out);
-    if (Date.now() < deadline) await resolveArtists(deadline, out);
+    // Artists first, on their own slice, so the track loop can never starve
+    // them again. Once the artist queue drains this costs nothing: the select
+    // returns no rows, the function returns immediately, and tracks inherit
+    // the full budget.
+    await resolveArtists(Date.now() + ARTIST_BUDGET_MS, out);
+    await resolveTracks(hardDeadline, out);
   } catch (err) {
     console.warn('[enrich] pass failed:', err);
   }
