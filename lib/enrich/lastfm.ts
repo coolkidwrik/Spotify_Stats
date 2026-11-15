@@ -22,21 +22,32 @@ const TIMEOUT_MS = 4000;
  * Floor for a tag to be worth storing. Last.fm weights are 0-100 relative to
  * the most-applied tag on that item.
  *
- * This started at 15 and was too aggressive: the first production pass stored
- * 3.7 tags per artist against a MAX_TAGS cap of 12, so the threshold was
- * binding long before the cap and most of the usable tail was discarded.
+ * Effectively off, and deliberately so. This went 15 -> 5 -> 1 against real
+ * data: at 15 it stored 3.7 tags per artist, at 5 it stored 5.3 with a hard
+ * ceiling of 7 and nothing anywhere near the MAX_TAGS cap of 12.
  *
- * Deliberately low now. The weight is stored per row, so the SCORER can
- * down-weight or ignore a weak tag — that is a tunable. Dropping it here is
- * not: recovering it means re-walking every artist through Last.fm. Filter
- * late, not early.
+ * That ceiling is a property of Last.fm, not of the library. getTopTags
+ * normalizes counts so the top tag is 100, and the dropoff is steep —
+ * roughly 100, 87, 45, 30, 18, 12, 8, then a tail at 4, 3, 2, 1. Any floor
+ * in the single digits lands on that elbow and truncates every artist to
+ * about the same count.
+ *
+ * So the floor does nothing useful and MAX_TAGS does the real work: the API
+ * returns tags sorted by count descending, so the slice below takes the top
+ * N by weight and is self-limiting. 1 only excludes degenerate zero-count
+ * entries.
+ *
+ * The weight is stored per row, so a weak tag can be down-weighted or
+ * ignored by the SCORER — a tunable, reversible in one line. Dropping it
+ * here is neither: recovery means re-walking every artist through Last.fm.
+ * Filter late, not early.
  *
  * Genuine noise is handled by JUNK_TAGS and the length checks below, which
  * target it far more precisely than a weight cutoff does.
  */
-const MIN_WEIGHT = 5;
+const MIN_WEIGHT = 1;
 
-/** The real guard against the long tail: take the top N by weight. */
+/** The real filter: the API sorts by count desc, so this is the top N. */
 const MAX_TAGS = 12;
 
 export interface Tag {
