@@ -62,6 +62,23 @@ export async function setCursor(ms: number): Promise<void> {
 // Plays
 // ---------------------------------------------------------------------------
 
+/**
+ * Spotify sometimes appends session parameters to a context URI:
+ *
+ *   spotify:playlist:3furHYuUoWS5kOAs63KEyx
+ *   spotify:playlist:3furHYuUoWS5kOAs63KEyx?sessionId=1790899200002&mod...
+ *
+ * The sessionId changes per listening session, so without stripping it the
+ * same playlist accumulates a new row in contexts every so often and its plays
+ * split across all of them — undercounting it everywhere it's ranked.
+ *
+ * Only the part before '?' identifies the playlist.
+ */
+function canonicalContextUri(uri: string): string {
+  const q = uri.indexOf('?');
+  return q === -1 ? uri : uri.slice(0, q);
+}
+
 /** De-duplicate by a key, keeping the first occurrence. */
 function uniqueBy<T>(rows: T[], key: (row: T) => string): T[] {
   const seen = new Set<string>();
@@ -150,12 +167,15 @@ export async function insertPlays(
   const contextRows = uniqueBy(
     usable
       .filter((i) => i.context?.uri)
-      .map((i) => ({
-        context_uri: i.context!.uri,
-        // Derive from the URI rather than trusting context.type — the two are
-        // the same fact, and the URI is the one we key on.
-        context_type: i.context!.uri.split(':')[1] ?? i.context!.type,
-      })),
+      .map((i) => {
+        const uri = canonicalContextUri(i.context!.uri);
+        return {
+          context_uri: uri,
+          // Derive from the URI rather than trusting context.type — the two
+          // are the same fact, and the URI is the one we key on.
+          context_type: uri.split(':')[1] ?? i.context!.type,
+        };
+      }),
     (r) => r.context_uri
   );
 
@@ -163,7 +183,7 @@ export async function insertPlays(
   const playRows = usable.map((i) => ({
     played_at: i.played_at,
     track_id: i.track.id as string,
-    context_uri: i.context?.uri ?? null,
+    context_uri: i.context?.uri ? canonicalContextUri(i.context.uri) : null,
   }));
 
   let inserted = 0;
