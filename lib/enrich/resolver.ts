@@ -1,3 +1,5 @@
+// lib/enrich/resolver.ts
+//
 // Walks the enrichment queue: Spotify ISRC -> Last.fm tags -> MusicBrainz
 // language. Called from the ingest cron run.
 //
@@ -146,6 +148,29 @@ async function writeArtistTags(
   return rows.length;
 }
 
+/**
+ * Tags already collected for this track's credited artists.
+ *
+ * A local read, not an API call — the artist loop has usually been here
+ * first. This exists because script detection cannot resolve a Han-only
+ * title (kanji and hanzi share the range), and MusicBrainz's work-language
+ * coverage is thin. An artist tagged 'j-pop' or 'city pop' settles it, and
+ * artist tags have far better coverage than track tags.
+ */
+async function artistTagsFor(trackId: string): Promise<string[]> {
+  try {
+    const rows = await sql<{ tag: string }[]>`
+      select distinct at2.tag
+        from track_artists ta
+        join artist_tags at2 on at2.artist_id = ta.artist_id
+       where ta.track_id = ${trackId}
+    `;
+    return rows.map((r: { tag: string }) => r.tag);
+  } catch {
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tracks
 // ---------------------------------------------------------------------------
@@ -213,12 +238,24 @@ async function resolveTracks(
         }
       }
 
-      // 3. Script of the title. Moved AHEAD of MusicBrainz: it costs
+      // 3. The artist's tags, already in our own database. Free, and the
+      //    only thing that reliably separates Japanese from Chinese for a
+      //    kanji-only title now that script detection correctly refuses to
+      //    guess at Han.
+      if (!language) {
+        const fromArtist = languageFromTags(await artistTagsFor(row.track_id));
+        if (fromArtist) {
+          language = fromArtist;
+          languageSource = 'tag';
+        }
+      }
+
+      // 4. Script of the title. Ahead of MusicBrainz because it costs
       //    microseconds, and for a Hangul or Kana title it is about as
       //    reliable as MusicBrainz's work language — which is often absent
-      //    for exactly those tracks anyway. It returns null for every
-      //    Latin-script title, which is precisely where MusicBrainz is worth
-      //    a second of budget.
+      //    for exactly those tracks anyway. Returns null for Latin-script
+      //    AND for Han-only titles, which is precisely where MusicBrainz is
+      //    worth a second of budget.
       if (!language) {
         const fromScript = languageFromScript(row.track_name);
         if (fromScript) {
@@ -227,13 +264,15 @@ async function resolveTracks(
         }
       }
 
-      // 4. ISRC, if not already stored. The join key into MusicBrainz.
+      // 5. ISRC, if not already stored. The join key into MusicBrainz.
       if (!isrc && token) {
         isrc = await fetchIsrc(row.track_id, token);
       }
 
-      // 5. MusicBrainz. Authoritative, but 1 req/sec — the budget bottleneck,
-      //    so it only runs when neither a tag nor the script answered.
+      // 6. MusicBrainz. Authoritative, but 1 req/sec — the budget bottleneck,
+      //    so it only runs when nothing cheaper answered. This is now the
+      //    only thing that can resolve a Han-only title when the artist has
+      //    no language-bearing tag.
       if (isrc && !language) {
         const rec = await lookupByIsrc(isrc);
         if (rec) {

@@ -80,31 +80,53 @@ export function languageFromTags(tags: string[]): string | null {
 }
 
 /**
- * Unicode ranges that identify a script unambiguously enough to be useful.
- * Order matters: Hangul and Kana are checked before Han, because Korean and
- * Japanese text both contain Han characters.
+ * Scripts that belong to exactly one language family, so seeing one is
+ * decisive.
+ *
+ * Han is NOT in this list, and that omission is the whole point — see below.
  */
 const SCRIPTS: { lang: string; re: RegExp }[] = [
-  { lang: 'kor', re: /[가-힯ᄀ-ᇿ]/ },        // Hangul
-  { lang: 'jpn', re: /[぀-ゟ゠-ヿ]/ },        // Hiragana, Katakana
-  { lang: 'cmn', re: /[一-鿿]/ },                     // Han
-  { lang: 'rus', re: /[Ѐ-ӿ]/ },                     // Cyrillic
-  { lang: 'ara', re: /[؀-ۿ]/ },                     // Arabic
-  { lang: 'hin', re: /[ऀ-ॿ]/ },                     // Devanagari
-  { lang: 'heb', re: /[֐-׿]/ },                     // Hebrew
-  { lang: 'tha', re: /[฀-๿]/ },                     // Thai
-  { lang: 'ell', re: /[Ͱ-Ͽ]/ },                     // Greek
+  // Hangul syllables, conjoining jamo, compatibility jamo
+  { lang: 'kor', re: /[가-힣ᄀ-ᇿ㄰-㆏]/ },
+  // Hiragana, katakana, halfwidth katakana, iteration marks
+  { lang: 'jpn', re: /[぀-ゟ゠-ヿｦ-ﾝ]/ },
+  { lang: 'rus', re: /[Ѐ-ӿ]/ }, // Cyrillic — see caveat below
+  { lang: 'ara', re: /[؀-ۿ]/ },
+  { lang: 'hin', re: /[ऀ-ॿ]/ },
+  { lang: 'heb', re: /[֐-׿]/ },
+  { lang: 'tha', re: /[฀-๿]/ },
+  { lang: 'ell', re: /[Ͱ-Ͽ]/ },
 ];
+
+/**
+ * Han characters, deliberately excluded from SCRIPTS above.
+ *
+ * This range was previously mapped straight to 'cmn', which was wrong and
+ * produced wrong data in production: Japanese kanji, Chinese hanzi and Korean
+ * hanja all live here. A Japanese title written entirely in kanji — 千本桜,
+ * 恋愛裁判 — contains no kana, so it fell past the Japanese check and got
+ * labelled Mandarin.
+ *
+ * Kept as a named export so a caller can ask "is this CJK at all?" without
+ * being handed a guess about WHICH of the three.
+ */
+export const HAN = /[一-鿿㐀-䶿]/;
 
 /**
  * Detect from the title's script.
  *
- * Returns null for anything Latin-script, which is the honest answer: the
- * method genuinely cannot tell English from Spanish from French.
+ * Returns null for anything Latin-script — the method genuinely cannot tell
+ * English from Spanish from French — and also for Han-only titles, where it
+ * cannot tell Japanese from Chinese. Those go to MusicBrainz, which can.
  *
- * Note the asymmetry — a Japanese song titled in English reads as null, while
- * an English song would never be misread as Japanese. The errors are all
- * omissions, never false positives.
+ * The asymmetry is the design goal: every error should be an omission, never
+ * a false positive. A wrong language is worse than a missing one, because a
+ * missing one is visibly missing.
+ *
+ * One caveat that remains: Cyrillic maps to Russian, which is a guess against
+ * Ukrainian, Bulgarian and Serbian. It is kept because Russian dominates by a
+ * wide margin and the alternative scripts aren't separable by range either —
+ * but it is a guess, and language_source = 'script' is how you know.
  */
 export function languageFromScript(title: string): string | null {
   for (const { lang, re } of SCRIPTS) {
