@@ -1,5 +1,3 @@
-// lib/enrich/language.ts
-//
 // Language detection fallbacks, for the ~60-80% of tracks MusicBrainz can't
 // answer.
 //
@@ -18,56 +16,66 @@
 import 'server-only';
 
 /**
- * Last.fm tags that reliably imply a language. Deliberately conservative:
- * a genre tag is weak evidence, and a wrong language is worse than none.
+ * Last.fm tags that imply the language of the LYRICS.
  *
- * "latin" is excluded on purpose — it's a genre covering Spanish and
- * Portuguese and sometimes neither.
+ * THE RULE: a scene or genre may map to a language. A nationality may not.
+ *
+ * The first version of this map ignored that distinction and got it badly
+ * wrong in production. Tags like 'swedish', 'german', 'italian' and
+ * 'indonesian' describe where an ARTIST is from, not what language a track
+ * is sung in — so ABBA's "Dancing Queen" was labelled Swedish, and C418's
+ * instrumental Minecraft tracks were too, overriding a correct 'zxx' from
+ * MusicBrainz. Every label those tags produced was wrong.
+ *
+ * The damage was amplified by the resolver reading ARTIST tags, which is
+ * precisely where nationality tags live — a track is rarely tagged
+ * 'swedish', but a Swedish band always is.
+ *
+ * What survives is the set where the tag names a scene whose output is
+ * essentially always in one language. 'j-pop' is not a statement about where
+ * someone was born; it is a statement about the music.
+ *
+ * Deliberately excluded, beyond the nationalities:
+ *   latin   — a genre spanning Spanish, Portuguese, and sometimes neither
+ *   anime   — names a medium, not a language. Anime soundtracks are full of
+ *             instrumentals and English insert songs.
+ *   j-rock / city pop are kept but are the weakest entries here; drop them
+ *             first if jpn still shows errors.
  */
 const TAG_LANGUAGE: Record<string, string> = {
+  // Japanese scenes
   'j-pop': 'jpn',
   jpop: 'jpn',
   'j-rock': 'jpn',
   jrock: 'jpn',
-  japanese: 'jpn',
   vocaloid: 'jpn',
   'city pop': 'jpn',
-  anime: 'jpn',
+  enka: 'jpn',
 
+  // Korean scenes
   'k-pop': 'kor',
   kpop: 'kor',
-  korean: 'kor',
+  'k-indie': 'kor',
+  trot: 'kor',
 
+  // Chinese scenes
   'c-pop': 'cmn',
+  cpop: 'cmn',
   mandopop: 'cmn',
   cantopop: 'yue',
-  chinese: 'cmn',
 
-  french: 'fra',
-  'french rap': 'fra',
-  chanson: 'fra',
+  // Indian film music
+  bollywood: 'hin',
+  filmi: 'hin',
 
-  spanish: 'spa',
+  // Scenes defined by singing in the language
   reggaeton: 'spa',
   'musica en espanol': 'spa',
-
-  german: 'deu',
-  deutsch: 'deu',
-
-  portuguese: 'por',
+  chanson: 'fra',
+  'french rap': 'fra',
+  'rap francais': 'fra',
   mpb: 'por',
   'brazilian music': 'por',
-
-  italian: 'ita',
-  russian: 'rus',
-  swedish: 'swe',
-  'bollywood': 'hin',
-  hindi: 'hin',
-  arabic: 'ara',
-  turkish: 'tur',
-  thai: 'tha',
-  vietnamese: 'vie',
-  indonesian: 'ind',
 };
 
 /** Infer from tags. Returns null unless a tag maps unambiguously. */
